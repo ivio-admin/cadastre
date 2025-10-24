@@ -5,8 +5,8 @@
 <title>RC + GetFeatureInfo (Catastro)</title>
 <style>
   body{font-family:system-ui,Segoe UI,Arial;margin:16px}
-  .row{display:flex;gap:8px;align-items:center}
-  input{flex:1;padding:8px 10px;border:1px solid #ccc;border-radius:8px}
+  .grid{display:grid;grid-template-columns:1fr 1fr 2fr auto;gap:8px;align-items:center}
+  input{padding:8px 10px;border:1px solid #ccc;border-radius:8px}
   button{padding:8px 12px;border:0;border-radius:8px;background:#1f6feb;color:#fff;cursor:pointer}
   #estado{margin-top:10px;color:#555}
   #resumen{margin-top:12px;padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#fafafa;display:none}
@@ -14,9 +14,11 @@
   #debug{margin-top:10px;font:12px/1.3 monospace;color:#666;white-space:pre-wrap}
 </style>
 
-<h3>Búsqueda por Referencia Catastral (RC)-</h3>
-<div class="row">
-  <input id="refcat" type="text" placeholder="Ej: 25057A00500045 ó 1234567AB1234C0001DE" pattern="[A-Za-z0-9]{10,25}" required>
+<h3>Búsqueda por Referencia Catastral (RC):</h3>
+<div class="grid">
+  <input id="prov" placeholder="Provincia (opcional) - p.ej. Lleida">
+  <input id="muni" placeholder="Municipio (opcional) - p.ej. Almenar">
+  <input id="refcat" placeholder="RC (14 o 20) - p.ej. 25057A00500045" pattern="[A-Za-z0-9]{10,25}" required>
   <button id="btnBuscar">Buscar</button>
 </div>
 <div id="estado"></div>
@@ -32,22 +34,15 @@
 
 <script>
 (function(){
-  // === CONFIGURA AQUÍ TU PROXY DE CLOUDFLARE (recomendado) ===
-  // Ejemplo: 'https://tu-proxy.worker.dev/?url='
-  const myWorkerProxy = 'https://ivio.irodriguezdiputacio.workers.dev/?url='; // <-- pega aquí tu URL si ya la tienes
-  // Proxy de respaldo para pruebas (no fiable en producción):
-  const fallbackProxy = 'https://thingproxy.freeboard.io/fetch/';
+  // === Pega aquí tu proxy de Cloudflare Worker (acaba en ?url=). Deja fallback si aún no lo tienes ===
+  const myWorkerProxy = 'https://ivio.irodriguezdiputacio.workers.dev/?url='; // ej: 'https://tu-proxy.worker.dev/?url='
+  const fallbackProxy  = 'https://thingproxy.freeboard.io/fetch/'; // solo pruebas
+  const proxy = (myWorkerProxy || fallbackProxy);
+  const wrap  = url => proxy + encodeURIComponent(url);
 
-  // Elegimos proxy disponible
-  const proxy = myWorkerProxy || fallbackProxy;
-  const wrap = url => proxy + encodeURIComponent(url);
+  const q = id => document.getElementById(id);
+  const estado = q('estado'), htmlDiv = q('html'), resumenDiv = q('resumen'), debugDiv = q('debug');
 
-  const btn = document.getElementById('btnBuscar');
-  const inp = document.getElementById('refcat');
-  const estado = document.getElementById('estado');
-  const htmlDiv = document.getElementById('html');
-  const resumenDiv = document.getElementById('resumen');
-  const debugDiv = document.getElementById('debug');
   const setEstado = t => estado.textContent = t || '';
 
   async function fetchText(url){
@@ -63,10 +58,21 @@
     return null;
   }
 
-  async function getXYfromRC(rc){
+  async function getXYfromRC(rc, prov, muni){
     const tried = [];
 
-    // 1) WCF Callejero (a veces no devuelve x/y para RC de 14)
+    // 1) DNPRC (ASMX) con Provincia/Municipio si están informados
+    if (prov || muni) {
+      try {
+        const u = `https://ovc.catastro.meh.es/OVCServWeb/OVCSWLocalizacionRC/OVCSWLocalizacionRC.asmx/Consulta_DNPRC?Provincia=${encodeURIComponent(prov||'')}&Municipio=${encodeURIComponent(muni||'')}&RC=${encodeURIComponent(rc)}`;
+        tried.push(u);
+        const xml = await fetchText(u);
+        const xy = tryParseXY(xml);
+        if (xy) return {xy, used: u};
+      } catch(e){}
+    }
+
+    // 2) DNPRC (WCF)
     try{
       const u = `https://ovc.catastro.meh.es/OVCServWeb/OVCWcfCallejero/COVCCallejero.svc/Consulta_DNPRC?RC=${encodeURIComponent(rc)}`;
       tried.push(u);
@@ -75,7 +81,7 @@
       if(xy) return {xy, used:u};
     }catch(e){}
 
-    // 2) ASMX DNPRC (con Provincia/Municipio vacíos – algunos casos devuelven centroide)
+    // 3) DNPRC (ASMX) sin provincia/municipio
     try{
       const u = `https://ovc.catastro.meh.es/OVCServWeb/OVCSWLocalizacionRC/OVCSWLocalizacionRC.asmx/Consulta_DNPRC?Provincia=&Municipio=&RC=${encodeURIComponent(rc)}`;
       tried.push(u);
@@ -84,7 +90,18 @@
       if(xy) return {xy, used:u};
     }catch(e){}
 
-    // 3) **ASMX RCCOOR** (el más fiable para RC de 14)
+    // 4) RCCOOR (ASMX) con Provincia/Municipio si están informados
+    if (prov || muni) {
+      try{
+        const u = `https://ovc.catastro.meh.es/OVCServWeb/OVCSWLocalizacionRC/OVCSWLocalizacionRC.asmx/Consulta_RCCOOR?Provincia=${encodeURIComponent(prov||'')}&Municipio=${encodeURIComponent(muni||'')}&RC=${encodeURIComponent(rc)}&SRS=EPSG:4258`;
+        tried.push(u);
+        const xml = await fetchText(u);
+        const xy = tryParseXY(xml);
+        if(xy) return {xy, used:u};
+      }catch(e){}
+    }
+
+    // 5) RCCOOR (ASMX) sin provincia/municipio (a veces no devuelve nada para 14)
     try{
       const u = `https://ovc.catastro.meh.es/OVCServWeb/OVCSWLocalizacionRC/OVCSWLocalizacionRC.asmx/Consulta_RCCOOR?RC=${encodeURIComponent(rc)}&SRS=EPSG:4258`;
       tried.push(u);
@@ -93,7 +110,6 @@
       if(xy) return {xy, used:u};
     }catch(e){}
 
-    // nada
     return {xy:null, tried};
   }
 
@@ -111,22 +127,25 @@
   }
 
   async function buscar(){
-    const rc = (inp.value||'').trim();
+    const rc = (q('refcat').value||'').trim();
+    const prov = (q('prov').value||'').trim();
+    const muni = (q('muni').value||'').trim();
+
     if(!rc){ setEstado('Introduce una referencia catastral.'); return; }
 
     htmlDiv.innerHTML=''; resumenDiv.style.display='none'; debugDiv.textContent='';
     setEstado('Localizando coordenadas…');
 
     try{
-      const loc = await getXYfromRC(rc);
+      const loc = await getXYfromRC(rc, prov, muni);
       if(!loc.xy){
-        setEstado('No se han obtenido coordenadas para esa RC. Revisa el valor.');
+        setEstado('No se han obtenido coordenadas para esa RC. Prueba indicando Provincia y Municipio.');
         debugDiv.textContent = 'Endpoints probados:\n' + (loc.tried||[]).join('\n');
         return;
       }
 
-      const { x, y } = loc.xy; // lon, lat (ETRS89)
-      const delta=0.0004; // amplío un poco la ventana
+      const { x, y } = loc.xy; // lon,lat (ETRS89)
+      const delta=0.0004; // ~40 m
       const minx=(x-delta).toFixed(6), miny=(y-delta).toFixed(6);
       const maxx=(x+delta).toFixed(6), maxy=(y+delta).toFixed(6);
 
@@ -134,7 +153,7 @@
       const wmsBase='https://ovc.catastro.meh.es/cartografia/INSPIRE/spadgcwms.aspx';
       const params=new URLSearchParams({
         SERVICE:'WMS',
-        VERSION:'1.1.1',         // orden lon,lat estable
+        VERSION:'1.1.1', // orden lon,lat
         REQUEST:'GetFeatureInfo',
         LAYERS:'CP.CadastralParcel',
         QUERY_LAYERS:'CP.CadastralParcel',
@@ -155,9 +174,13 @@
 
       setEstado(`RC localizada en (${x.toFixed(6)}, ${y.toFixed(6)}).`);
       debugDiv.textContent = [
-        'Localizador usado:', loc.used,
+        prov||muni ? `Se usó Provincia/Municipio: ${prov} / ${muni}` : 'Provincia/Municipio no informados',
         '',
-        'URL GetFeatureInfo:', wmsUrl
+        'Localizador usado:',
+        (loc.used || '(no capturado)'),
+        '',
+        'URL GetFeatureInfo:',
+        wmsUrl
       ].join('\n');
     }catch(e){
       console.error(e);
