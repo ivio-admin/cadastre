@@ -64,7 +64,7 @@
     // 1) DNPRC (ASMX) con Provincia/Municipio si están informados
     if (prov || muni) {
       try {
-        const u = `https://ovc.catastro.meh.es/OVCServWeb/OVCSWLocalizacionRC/OVCSWLocalizacionRC.asmx/Consulta_DNPRC?Provincia=${encodeURIComponent(prov||'')}&Municipio=${encodeURIComponent(muni||'')}&RC=${encodeURIComponent(rc)}`;
+        const u = `http://ovc.catastro.meh.es/OVCServWeb/OVCSWLocalizacionRC/OVCCallejeroCodigos.asmx/Consulta_DNPRC_Codigos?CodigoProvincia=${encodeURIComponent(prov||'')}&CodigoMunicipio=${encodeURIComponent(muni||'')}&CodigoMunicipioINE=&RC=${encodeURIComponent(rc)}`;
         tried.push(u);
         const xml = await fetchText(u);
         const xy = tryParseXY(xml);
