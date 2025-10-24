@@ -1,6 +1,8 @@
 <!doctype html>
+<html lang="es">
 <meta charset="utf-8">
-<title>RC + GetFeatureInfo (Catastro)</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Búsqueda RC + GetFeatureInfo Catastro</title>
 <style>
   body{font-family:system-ui,Segoe UI,Arial;margin:16px}
   .row{display:flex;gap:8px;align-items:center}
@@ -25,17 +27,15 @@
 
 <script>
 (function(){
-  // Cambia a true si ves errores CORS en la consola
-  const useProxy = false;
-  const proxy = 'https://thingproxy.freeboard.io/fetch/'; // demo. Para producción: tu propio proxy.
+  const useProxy = true; // activa proxy si CORS falla
+  const proxy = 'https://thingproxy.freeboard.io/fetch/';
 
+  const wrap = url => useProxy ? (proxy + encodeURI(url)) : url;
   const btn = document.getElementById('btnBuscar');
   const inp = document.getElementById('refcat');
   const estado = document.getElementById('estado');
   const htmlDiv = document.getElementById('html');
   const resumenDiv = document.getElementById('resumen');
-
-  const wrap = url => useProxy ? (proxy + encodeURI(url)) : url;
   const setEstado = t => estado.textContent = t || '';
 
   async function fetchText(url){
@@ -57,55 +57,4 @@
     const mMuni = text.match(/(Municipio|Municipality|locality)\s*[:=]\s*([A-ZÁÉÍÓÚÜÑa-záéíóúüñ\.\-\s]+)/);
     const mSup = text.match(/(Área|Superficie|Area)\s*[:=]\s*([\d\.,]+\s*(m²|m2)?)/i);
     let out='';
-    if(mRC) out+=`<div><b>RC:</b> ${mRC[2]}</div>`;
-    if(mMuni) out+=`<div><b>Municipio:</b> ${mMuni[2].trim()}</div>`;
-    if(mSup) out+=`<div><b>Superficie:</b> ${mSup[2]}</div>`;
-    return out;
-  }
-
-  async function buscar(){
-    const rc = (inp.value||'').trim();
-    if(!rc){ setEstado('Introduce una referencia catastral.'); return; }
-    htmlDiv.innerHTML=''; resumenDiv.style.display='none'; setEstado('Localizando coordenadas…');
-
-    try{
-      // 1) Coordenadas por RC (centroide ETRS89)
-      const urlCoords = 'https://ovc.catastro.meh.es/OVCServWeb/OVCWcfCallejero/COVCCallejero.svc/Consulta_DNPRC?RC='
-                        + encodeURIComponent(rc);
-      const xml = await fetchText(urlCoords);
-      const xy = parseXY(xml);
-      if(!xy){ setEstado('No se han obtenido coordenadas para esa RC.'); return; }
-
-      // 2) BBOX alrededor del punto (CRS=EPSG:4258)
-      const delta=0.0003;
-      const minx=(xy.x-delta).toFixed(6), miny=(xy.y-delta).toFixed(6);
-      const maxx=(xy.x+delta).toFixed(6), maxy=(xy.y+delta).toFixed(6);
-
-      // 3) GetFeatureInfo WMS
-      setEstado('Consultando WMS GetFeatureInfo…');
-      const wmsBase='https://ovc.catastro.meh.es/cartografia/INSPIRE/spadgcwms.aspx';
-      const params=new URLSearchParams({
-        SERVICE:'WMS', VERSION:'1.3.0', REQUEST:'GetFeatureInfo',
-        LAYERS:'CP.CadastralParcel', QUERY_LAYERS:'CP.CadastralParcel',
-        CRS:'EPSG:4258', BBOX:`${minx},${miny},${maxx},${maxy}`,
-        WIDTH:'101', HEIGHT:'101', I:'50', J:'50', INFO_FORMAT:'text/html'
-      });
-      const html = await fetchText(`${wmsBase}?${params.toString()}`);
-
-      htmlDiv.innerHTML = html || '(Sin contenido)';
-      const resumen = extractSummaryFromHTML(html);
-      if(resumen){ resumenDiv.innerHTML = `<b>Resumen</b><br>${resumen}`; resumenDiv.style.display='block'; }
-      setEstado(`RC localizada en (${xy.x.toFixed(6)}, ${xy.y.toFixed(6)}).`);
-
-      // Aviso a app padre (Experience Builder) para centrar el mapa si quieres
-      try{ parent.postMessage({type:'catastro_rc_location',rc,x:xy.x,y:xy.y}, '*'); }catch(e){}
-    }catch(e){
-      console.error(e);
-      setEstado('Error en la consulta (CORS o servicio no disponible). Prueba activar el proxy en el código.');
-    }
-  }
-
-  btn.addEventListener('click',buscar);
-  inp.addEventListener('keydown',e=>{ if(e.key==='Enter') buscar(); });
-})();
-</script>
+    if(mRC) out+=`<div><b>RC:</b> ${mRC
