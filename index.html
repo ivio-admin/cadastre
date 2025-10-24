@@ -2,151 +2,137 @@
 <html lang="es">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cerca referència cadastral</title>
+<title>RC (WFS) → Center EB map</title>
 <style>
   body{font-family:system-ui,Segoe UI,Arial;margin:16px}
-  .row{display:flex;gap:8px;align-items:center}
-  input{flex:1;padding:8px 10px;border:1px solid #ccc;border-radius:8px}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  input{padding:8px 10px;border:1px solid #ccc;border-radius:8px}
+  input[type="text"]{flex:1;min-width:240px}
   button{padding:8px 12px;border:0;border-radius:8px;background:#1f6feb;color:#fff;cursor:pointer}
   #estado{margin-top:10px;color:#555}
   #coords{margin-top:12px;padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#fafafa;display:none}
-  #html{margin-top:8px;border:1px dashed #ddd;padding:10px;border-radius:8px;background:#fff;max-height:360px;overflow:auto}
   #debug{margin-top:10px;font:12px/1.3 monospace;color:#666;white-space:pre-wrap}
-  .small{font-size:12px;color:#666}
 </style>
 
-<h3>Cerca referència cadastral</h3>
+<h3>Buscar RC (WFS) y centrar tu Experience Builder</h3>
+
 <div class="row">
-  <input id="refcat" placeholder="Ej: 12345A12345678 (14) o 12345A123456789012AB (20)" pattern="[A-Za-z0-9]{10,25}" required>
-  <button id="btnBuscar">Cerca</button>
+  <input id="appUrl" placeholder="URL de tu Experience (p.ej. https://experience.arcgis.com/experience/XXXXX)">
+  <input id="mapId"  placeholder="ID del Map widget (por defecto map_1)" value="map_1" style="max-width:220px">
+</div>
+
+<div class="row" style="margin-top:8px">
+  <input id="refcat" placeholder="RC: 212345A12345678 (14) o 12345A123456789012AB" pattern="[A-Za-z0-9]{10,25}" required>
+  <button id="btnBuscar">Buscar y centrar</button>
 </div>
 
 <div id="estado"></div>
 
 <div id="coords">
-  <div><b>Centroide</b></div>
+  <div><b>ReferencePoint_ES</b></div>
   <div>EPSG:3857 → <span id="p3857"></span></div>
-  <div>EPSG:4326 → <span id="p4326"></span> <span class="small">(lon,lat)</span></div>
-  <div style="margin-top:8px">
-    <button id="copiar">Copiar lon,lat (4326)</button>
-  </div>
+  <div>EPSG:4326 → <span id="p4326"></span> (lon,lat)</div>
 </div>
 
 <details style="margin-top:10px">
-  <summary>Respuesta WFS (XML) / Depuración</summary>
+  <summary>Depuración</summary>
   <div id="debug"></div>
 </details>
 
 <script>
 (function(){
-  // === Proxy CORS ===
-  // Pon aquí tu Cloudflare Worker (debe acabar en ?url=). Si no tienes, queda el fallback de pruebas.
-  const workerProxy = ''; // ej: 'https://tu-proxy.worker.dev/?url='
-  const fallbackProxy = 'https://thingproxy.freeboard.io/fetch/'; // solo pruebas
+  // ==== 1) PROXY CORS ====
+  // Pon aquí tu Cloudflare Worker si lo tienes (debe acabar en ?url=). Si no, queda un fallback de pruebas.
+  const workerProxy  = 'https://ivio.irodriguezdiputacio.workers.dev/?url='; // ej: 'https://tu-proxy.worker.dev/?url='
+  const fallbackProxy = 'https://thingproxy.freeboard.io/fetch/'; // solo pruebas (no estable)
   const proxy = workerProxy || fallbackProxy;
   const wrap  = url => proxy + encodeURIComponent(url);
 
+  // ==== 2) UTILIDADES ====
   const q = id => document.getElementById(id);
-  const inp = q('refcat'), btn = q('btnBuscar'), estado = q('estado');
-  const divC = q('coords'), p3857 = q('p3857'), p4326 = q('p4326'), debug = q('debug');
+  const estado = q('estado'), debug = q('debug');
+  const p3857 = q('p3857'), p4326 = q('p4326'), divC = q('coords');
 
   const setEstado = t => estado.textContent = t || '';
 
-  // Sencilla reproyección WebMercator (EPSG:3857) -> WGS84 (EPSG:4326)
-  function webMercatorToLonLat(x, y){
-    const R = 6378137;
-    const lon = (x / R) * 180/Math.PI;
-    const lat = (2 * Math.atan(Math.exp(y / R)) - Math.PI/2) * 180/Math.PI;
-    return { lon, lat };
+  // reproyección 3857 → 4326
+  function wmTo4326(x, y){
+    const R=6378137;
+    const lon=(x/R)*180/Math.PI;
+    const lat=(2*Math.atan(Math.exp(y/R))-Math.PI/2)*180/Math.PI;
+    return {lon,lat};
   }
 
   async function fetchText(url){
     const res = await fetch(wrap(url));
-    if(!res.ok) throw new Error('HTTP ' + res.status);
+    if(!res.ok) throw new Error('HTTP '+res.status);
     return res.text();
   }
 
-  function firstMatch(re, text){
-    const m = re.exec(text);
-    return m ? m[1] : null;
-  }
-
+  // Toma ReferencePoint_ES → gml:pos x y (EPSG:3857)
   function getReferencePoint(xml){
-    // Buscamos cualquier nodo ReferencePoint (con o sin namespace) y su gml:pos
-    // 1) ReferencePoint_ES con gml:pos (x y) en EPSG:3857
     let m = xml.match(/<[^>]*ReferencePoint[^>]*>[\s\S]*?<[^:>]*:?pos[^>]*>([^<]+)<\/[^:>]*:?pos>/i);
     if(m){
-      const parts = m[1].trim().split(/\s+/);
-      if(parts.length >= 2) {
-        const x = parseFloat(parts[0]);
-        const y = parseFloat(parts[1]);
-        if(!Number.isNaN(x) && !Number.isNaN(y)) return {x,y};
-      }
+      const [x,y] = m[1].trim().split(/\s+/).map(Number);
+      if(Number.isFinite(x)&&Number.isFinite(y)) return {x,y};
     }
-    // 2) Si no hubiera referencePoint, tomamos el primer gml:pos de un gml:Point
+    // Alternativa: primer gml:Point/gml:pos
     m = xml.match(/<[^>]*:?Point[^>]*>[\s\S]*?<[^:>]*:?pos[^>]*>([^<]+)<\/[^:>]*:?pos>/i);
     if(m){
-      const parts = m[1].trim().split(/\s+/);
-      if(parts.length >= 2) {
-        const x = parseFloat(parts[0]);
-        const y = parseFloat(parts[1]);
-        if(!Number.isNaN(x) && !Number.isNaN(y)) return {x,y};
-      }
-    }
-    // 3) Último recurso: centroid aproximado del primer posList (polígono)
-    m = xml.match(/<[^>]*:?posList[^>]*>([^<]+)<\/[^:>]*:?posList>/i);
-    if(m){
-      const nums = m[1].trim().split(/\s+/).map(Number).filter(n=>!Number.isNaN(n));
-      let sx=0, sy=0, c=0;
-      for(let i=0;i+1<nums.length;i+=2){ sx+=nums[i]; sy+=nums[i+1]; c++; }
-      if(c>0) return {x:sx/c, y:sy/c};
+      const [x,y] = m[1].trim().split(/\s+/).map(Number);
+      if(Number.isFinite(x)&&Number.isFinite(y)) return {x,y};
     }
     return null;
   }
 
+  // ==== 3) BÚSQUEDA Y CENTRADO ====
   async function buscar(){
-    const rc = (inp.value||'').trim();
-    if(!rc){ setEstado('Introduce una referencia catastral.'); return; }
+    const appUrl = (q('appUrl').value||'').trim();
+    const mapId  = (q('mapId').value||'map_1').trim();
+    const rc     = (q('refcat').value||'').trim();
 
-    setEstado('Consultando WFS (GetFeature by REFCAT)…');
+    if(!rc){ setEstado('Introduce una RC.'); return; }
+    if(!appUrl){ setEstado('Introduce la URL de tu Experience.'); return; }
+
+    setEstado('Consultando WFS (GetParcel por REFCAT)…');
     divC.style.display='none'; debug.textContent='';
 
-    // WFS 2.0 — INSPIRE — parcela por REFCAT (EPSG:3857)
-    const url = `http://ovc.catastro.meh.es/INSPIRE/wfsCP.aspx?service=wfs&version=2&request=getfeature&STOREDQUERIE_ID=GetParcel&srsname=EPSG:3857&REFCAT=${encodeURIComponent(rc)}`;
+    const wfs = `http://ovc.catastro.meh.es/INSPIRE/wfsCP.aspx?service=wfs&version=2&request=getfeature&STOREDQUERIE_ID=GetParcel&srsname=EPSG:3857&REFCAT=${encodeURIComponent(rc)}`;
 
     try{
-      const xml = await fetchText(url);
-      debug.textContent = xml.substring(0, 100000); // muestra parte para depurar
+      const xml = await fetchText(wfs);
+      debug.textContent = xml.substring(0, 6000);
 
       const pt = getReferencePoint(xml);
-      if(!pt){
-        setEstado('No se encontró ReferencePoint_ES (ni geometría utilizable) para esa RC.');
-        return;
-      }
+      if(!pt){ setEstado('No se encontró ReferencePoint_ES para esa RC.'); return; }
 
-      // Mostramos coordenadas y versión 4326
-      const {x, y} = pt;
-      const {lon, lat} = webMercatorToLonLat(x, y);
+      // Mostrar coords
+      const {x,y} = pt;
+      const {lon,lat} = wmTo4326(x,y);
       p3857.textContent = `${x.toFixed(2)}, ${y.toFixed(2)}`;
       p4326.textContent = `${lon.toFixed(6)}, ${lat.toFixed(6)}`;
       divC.style.display = 'block';
-      setEstado('Listo. Puedes usar estas coordenadas para centrar tu mapa.');
 
-      // (Opcional) enviar a un padre (si se inserta en un iframe en EB)
-      try{ parent.postMessage({ type:'rc_point', srs:'EPSG:4326', lon, lat }, '*'); }catch(e){}
+      // Construir URL con parámetros del Map widget:
+      //   #<mapId>=center:<x,y,wkid>,level:<n>
+      // OJO: x,y,wkid deben ir codificados (comas %2C)
+      const centerVal = encodeURIComponent(`${x},${y},3857`);
+      const hashPart  = `${mapId}=center:${centerVal},level:19`;
+      const sep       = appUrl.includes('#') ? '&' : '#';
+      const targetUrl = `${appUrl}${sep}${hashPart}`;
+
+      setEstado('Centrando el mapa de tu Experience…');
+      // Redirigir la app padre (iframe) a la misma Experience con el hash que centra el mapa
+      window.top.location.href = targetUrl;
+
     }catch(e){
       console.error(e);
-      setEstado('Error en la consulta (CORS/proxy o servicio no disponible).');
+      setEstado('Error (CORS/proxy o servicio WFS). Revisa el proxy.');
     }
   }
 
   q('btnBuscar').addEventListener('click', buscar);
-  inp.addEventListener('keydown', e=>{ if(e.key==='Enter') buscar(); });
-  q('copiar').addEventListener('click', ()=>{
-    const t = p4326.textContent;
-    if(!t) return;
-    navigator.clipboard.writeText(t).then(()=> setEstado('Coordenadas copiadas (lon,lat WGS84).'));
-  });
+  q('refcat').addEventListener('keydown', e=>{ if(e.key==='Enter') buscar(); });
 })();
 </script>
 </html>
