@@ -34,7 +34,7 @@
 (function(){
   // Deja el proxy activado mientras pruebas desde GitHub Pages
   const useProxy = true;
-  const proxy = 'https://thingproxy.freeboard.io/fetch/'; // solo pruebas
+  const proxy = 'https://ivio.irodriguezdiputacio.workers.dev/?url='; // solo pruebas
 
   const wrap = url => useProxy ? (proxy + encodeURI(url)) : url;
   const btn = document.getElementById('btnBuscar');
