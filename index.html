@@ -14,7 +14,7 @@
   #debug{margin-top:10px;font:12px/1.3 monospace;color:#666;white-space:pre-wrap}
 </style>
 
-<h3>Búsqueda por Referencia Catastral (RC)</h3>
+<h3>Búsqueda por Referencia Catastral (RC)-</h3>
 <div class="row">
   <input id="refcat" type="text" placeholder="Ej: 25057A00500045 ó 1234567AB1234C0001DE" pattern="[A-Za-z0-9]{10,25}" required>
   <button id="btnBuscar">Buscar</button>
@@ -32,11 +32,16 @@
 
 <script>
 (function(){
-  // Deja el proxy activado mientras pruebas desde GitHub Pages
-  const useProxy = true;
-  const proxy = 'https://ivio.irodriguezdiputacio.workers.dev/?url='; // solo pruebas
+  // === CONFIGURA AQUÍ TU PROXY DE CLOUDFLARE (recomendado) ===
+  // Ejemplo: 'https://tu-proxy.worker.dev/?url='
+  const myWorkerProxy = 'https://ivio.irodriguezdiputacio.workers.dev/?url='; // <-- pega aquí tu URL si ya la tienes
+  // Proxy de respaldo para pruebas (no fiable en producción):
+  const fallbackProxy = 'https://thingproxy.freeboard.io/fetch/';
 
-  const wrap = url => useProxy ? (proxy + encodeURI(url)) : url;
+  // Elegimos proxy disponible
+  const proxy = myWorkerProxy || fallbackProxy;
+  const wrap = url => proxy + encodeURIComponent(url);
+
   const btn = document.getElementById('btnBuscar');
   const inp = document.getElementById('refcat');
   const estado = document.getElementById('estado');
@@ -51,10 +56,45 @@
     return res.text();
   }
 
-  function parseXY(xml){
-    const x = (xml.match(/<xcen>(.*?)<\/xcen>/i)||[])[1]; // lon
-    const y = (xml.match(/<ycen>(.*?)<\/ycen>/i)||[])[1]; // lat
-    return (x&&y)?{x:parseFloat(x),y:parseFloat(y)}:null;
+  function tryParseXY(xml){
+    const x = (xml.match(/<xcen>(.*?)<\/xcen>/i)||[])[1];
+    const y = (xml.match(/<ycen>(.*?)<\/ycen>/i)||[])[1];
+    if(x && y) return { x: parseFloat(x), y: parseFloat(y) };
+    return null;
+  }
+
+  async function getXYfromRC(rc){
+    const tried = [];
+
+    // 1) WCF Callejero (a veces no devuelve x/y para RC de 14)
+    try{
+      const u = `https://ovc.catastro.meh.es/OVCServWeb/OVCWcfCallejero/COVCCallejero.svc/Consulta_DNPRC?RC=${encodeURIComponent(rc)}`;
+      tried.push(u);
+      const xml = await fetchText(u);
+      const xy = tryParseXY(xml);
+      if(xy) return {xy, used:u};
+    }catch(e){}
+
+    // 2) ASMX DNPRC (con Provincia/Municipio vacíos – algunos casos devuelven centroide)
+    try{
+      const u = `https://ovc.catastro.meh.es/OVCServWeb/OVCSWLocalizacionRC/OVCSWLocalizacionRC.asmx/Consulta_DNPRC?Provincia=&Municipio=&RC=${encodeURIComponent(rc)}`;
+      tried.push(u);
+      const xml = await fetchText(u);
+      const xy = tryParseXY(xml);
+      if(xy) return {xy, used:u};
+    }catch(e){}
+
+    // 3) **ASMX RCCOOR** (el más fiable para RC de 14)
+    try{
+      const u = `https://ovc.catastro.meh.es/OVCServWeb/OVCSWLocalizacionRC/OVCSWLocalizacionRC.asmx/Consulta_RCCOOR?RC=${encodeURIComponent(rc)}&SRS=EPSG:4258`;
+      tried.push(u);
+      const xml = await fetchText(u);
+      const xy = tryParseXY(xml);
+      if(xy) return {xy, used:u};
+    }catch(e){}
+
+    // nada
+    return {xy:null, tried};
   }
 
   function extractSummaryFromHTML(html){
@@ -70,36 +110,31 @@
     return out;
   }
 
-  // Devuelve la URL para localizar por RC (admite 14 o 20 caracteres)
-  function buildRcLocatorUrl(rc){
-    // Servicio de "Datos no protegidos". Admite RC de 14 (parcela) o 20 (inmueble)
-    return 'https://ovc.catastro.meh.es/OVCServWeb/OVCWcfCallejero/COVCCallejero.svc/Consulta_DNPRC?RC='
-           + encodeURIComponent(rc);
-  }
-
   async function buscar(){
     const rc = (inp.value||'').trim();
     if(!rc){ setEstado('Introduce una referencia catastral.'); return; }
-    htmlDiv.innerHTML=''; resumenDiv.style.display='none'; debugDiv.textContent=''; setEstado('Localizando coordenadas…');
+
+    htmlDiv.innerHTML=''; resumenDiv.style.display='none'; debugDiv.textContent='';
+    setEstado('Localizando coordenadas…');
 
     try{
-      // 1) Coordenadas por RC (centroide ETRS89 lon/lat)
-      const urlCoords = buildRcLocatorUrl(rc);
-      const xml = await fetchText(urlCoords);
-      const xy = parseXY(xml);
-      if(!xy){ setEstado('No se han obtenido coordenadas para esa RC. Revisa el valor.'); return; }
+      const loc = await getXYfromRC(rc);
+      if(!loc.xy){
+        setEstado('No se han obtenido coordenadas para esa RC. Revisa el valor.');
+        debugDiv.textContent = 'Endpoints probados:\n' + (loc.tried||[]).join('\n');
+        return;
+      }
 
-      // 2) BBOX alrededor del punto (usaremos WMS 1.1.1 con SRS=EPSG:4258: lon,lat)
-      const delta=0.0003; // ~30m
-      const minx=(xy.x-delta).toFixed(6), miny=(xy.y-delta).toFixed(6);
-      const maxx=(xy.x+delta).toFixed(6), maxy=(xy.y+delta).toFixed(6);
+      const { x, y } = loc.xy; // lon, lat (ETRS89)
+      const delta=0.0004; // amplío un poco la ventana
+      const minx=(x-delta).toFixed(6), miny=(y-delta).toFixed(6);
+      const maxx=(x+delta).toFixed(6), maxy=(y+delta).toFixed(6);
 
-      // 3) GetFeatureInfo (WMS 1.1.1 => usa SRS y orden lon,lat)
       setEstado('Consultando WMS GetFeatureInfo…');
       const wmsBase='https://ovc.catastro.meh.es/cartografia/INSPIRE/spadgcwms.aspx';
       const params=new URLSearchParams({
         SERVICE:'WMS',
-        VERSION:'1.1.1',
+        VERSION:'1.1.1',         // orden lon,lat estable
         REQUEST:'GetFeatureInfo',
         LAYERS:'CP.CadastralParcel',
         QUERY_LAYERS:'CP.CadastralParcel',
@@ -114,21 +149,19 @@
       const wmsUrl = `${wmsBase}?${params.toString()}`;
       const html = await fetchText(wmsUrl);
 
-      // 4) Mostrar
       htmlDiv.innerHTML = html || '(Sin contenido)';
       const resumen = extractSummaryFromHTML(html);
       if(resumen){ resumenDiv.innerHTML = `<b>Resumen</b><br>${resumen}`; resumenDiv.style.display='block'; }
-      setEstado(`RC localizada en (${xy.x.toFixed(6)}, ${xy.y.toFixed(6)}).`);
 
-      // 5) Debug (útil si algo falla)
+      setEstado(`RC localizada en (${x.toFixed(6)}, ${y.toFixed(6)}).`);
       debugDiv.textContent = [
-        'URL coordenadas:', urlCoords,
+        'Localizador usado:', loc.used,
         '',
         'URL GetFeatureInfo:', wmsUrl
       ].join('\n');
     }catch(e){
       console.error(e);
-      setEstado('Error en la consulta (CORS o servicio no disponible).');
+      setEstado('Error en la consulta (proxy/CORS o servicio no disponible).');
     }
   }
 
