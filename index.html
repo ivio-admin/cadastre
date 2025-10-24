@@ -2,194 +2,151 @@
 <html lang="es">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RC + GetFeatureInfo (Catastro)</title>
+<title>Buscar RC (WFS) + ReferencePoint_ES</title>
 <style>
   body{font-family:system-ui,Segoe UI,Arial;margin:16px}
-  .grid{display:grid;grid-template-columns:1fr 1fr 2fr auto;gap:8px;align-items:center}
-  input{padding:8px 10px;border:1px solid #ccc;border-radius:8px}
+  .row{display:flex;gap:8px;align-items:center}
+  input{flex:1;padding:8px 10px;border:1px solid #ccc;border-radius:8px}
   button{padding:8px 12px;border:0;border-radius:8px;background:#1f6feb;color:#fff;cursor:pointer}
   #estado{margin-top:10px;color:#555}
-  #resumen{margin-top:12px;padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#fafafa;display:none}
+  #coords{margin-top:12px;padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#fafafa;display:none}
   #html{margin-top:8px;border:1px dashed #ddd;padding:10px;border-radius:8px;background:#fff;max-height:360px;overflow:auto}
   #debug{margin-top:10px;font:12px/1.3 monospace;color:#666;white-space:pre-wrap}
+  .small{font-size:12px;color:#666}
 </style>
 
-<h3>Búsqueda por Referencia Catastral (RC):</h3>
-<div class="grid">
-  <input id="prov" placeholder="Provincia (opcional) - p.ej. Lleida">
-  <input id="muni" placeholder="Municipio (opcional) - p.ej. Almenar">
-  <input id="refcat" placeholder="RC (14 o 20) - p.ej. 25057A00500045" pattern="[A-Za-z0-9]{10,25}" required>
+<h3>Búsqueda por Referencia Catastral (WFS → ReferencePoint_ES)</h3>
+<div class="row">
+  <input id="refcat" placeholder="Ej: 25057A00500045 (14) o 1234567AB1234C0001DE (20)" pattern="[A-Za-z0-9]{10,25}" required>
   <button id="btnBuscar">Buscar</button>
 </div>
+
 <div id="estado"></div>
-<div id="resumen"></div>
+
+<div id="coords">
+  <div><b>ReferencePoint_ES</b></div>
+  <div>EPSG:3857 → <span id="p3857"></span></div>
+  <div>EPSG:4326 → <span id="p4326"></span> <span class="small">(lon,lat)</span></div>
+  <div style="margin-top:8px">
+    <button id="copiar">Copiar lon,lat (4326)</button>
+  </div>
+</div>
+
 <details style="margin-top:10px">
-  <summary>Ver respuesta completa GetFeatureInfo (HTML)</summary>
-  <div id="html"></div>
-</details>
-<details>
-  <summary>Depuración</summary>
+  <summary>Respuesta WFS (XML) / Depuración</summary>
   <div id="debug"></div>
 </details>
 
 <script>
 (function(){
-  // === Pega aquí tu proxy de Cloudflare Worker (acaba en ?url=). Deja fallback si aún no lo tienes ===
-  const myWorkerProxy = 'https://ivio.irodriguezdiputacio.workers.dev/?url='; // ej: 'https://tu-proxy.worker.dev/?url='
-  const fallbackProxy  = 'https://thingproxy.freeboard.io/fetch/'; // solo pruebas
-  const proxy = (myWorkerProxy || fallbackProxy);
+  // === Proxy CORS ===
+  // Pon aquí tu Cloudflare Worker (debe acabar en ?url=). Si no tienes, queda el fallback de pruebas.
+  const workerProxy = 'https://ivio.irodriguezdiputacio.workers.dev/?url='; // ej: 'https://tu-proxy.worker.dev/?url='
+  const fallbackProxy = 'https://thingproxy.freeboard.io/fetch/'; // solo pruebas
+  const proxy = workerProxy || fallbackProxy;
   const wrap  = url => proxy + encodeURIComponent(url);
 
   const q = id => document.getElementById(id);
-  const estado = q('estado'), htmlDiv = q('html'), resumenDiv = q('resumen'), debugDiv = q('debug');
+  const inp = q('refcat'), btn = q('btnBuscar'), estado = q('estado');
+  const divC = q('coords'), p3857 = q('p3857'), p4326 = q('p4326'), debug = q('debug');
 
   const setEstado = t => estado.textContent = t || '';
 
+  // Sencilla reproyección WebMercator (EPSG:3857) -> WGS84 (EPSG:4326)
+  function webMercatorToLonLat(x, y){
+    const R = 6378137;
+    const lon = (x / R) * 180/Math.PI;
+    const lat = (2 * Math.atan(Math.exp(y / R)) - Math.PI/2) * 180/Math.PI;
+    return { lon, lat };
+  }
+
   async function fetchText(url){
     const res = await fetch(wrap(url));
-    if(!res.ok) throw new Error('HTTP '+res.status);
+    if(!res.ok) throw new Error('HTTP ' + res.status);
     return res.text();
   }
 
-  function tryParseXY(xml){
-    const x = (xml.match(/<xcen>(.*?)<\/xcen>/i)||[])[1];
-    const y = (xml.match(/<ycen>(.*?)<\/ycen>/i)||[])[1];
-    if(x && y) return { x: parseFloat(x), y: parseFloat(y) };
+  function firstMatch(re, text){
+    const m = re.exec(text);
+    return m ? m[1] : null;
+  }
+
+  function getReferencePoint(xml){
+    // Buscamos cualquier nodo ReferencePoint (con o sin namespace) y su gml:pos
+    // 1) ReferencePoint_ES con gml:pos (x y) en EPSG:3857
+    let m = xml.match(/<[^>]*ReferencePoint[^>]*>[\s\S]*?<[^:>]*:?pos[^>]*>([^<]+)<\/[^:>]*:?pos>/i);
+    if(m){
+      const parts = m[1].trim().split(/\s+/);
+      if(parts.length >= 2) {
+        const x = parseFloat(parts[0]);
+        const y = parseFloat(parts[1]);
+        if(!Number.isNaN(x) && !Number.isNaN(y)) return {x,y};
+      }
+    }
+    // 2) Si no hubiera referencePoint, tomamos el primer gml:pos de un gml:Point
+    m = xml.match(/<[^>]*:?Point[^>]*>[\s\S]*?<[^:>]*:?pos[^>]*>([^<]+)<\/[^:>]*:?pos>/i);
+    if(m){
+      const parts = m[1].trim().split(/\s+/);
+      if(parts.length >= 2) {
+        const x = parseFloat(parts[0]);
+        const y = parseFloat(parts[1]);
+        if(!Number.isNaN(x) && !Number.isNaN(y)) return {x,y};
+      }
+    }
+    // 3) Último recurso: centroid aproximado del primer posList (polígono)
+    m = xml.match(/<[^>]*:?posList[^>]*>([^<]+)<\/[^:>]*:?posList>/i);
+    if(m){
+      const nums = m[1].trim().split(/\s+/).map(Number).filter(n=>!Number.isNaN(n));
+      let sx=0, sy=0, c=0;
+      for(let i=0;i+1<nums.length;i+=2){ sx+=nums[i]; sy+=nums[i+1]; c++; }
+      if(c>0) return {x:sx/c, y:sy/c};
+    }
     return null;
   }
 
-  async function getXYfromRC(rc, prov, muni){
-    const tried = [];
-
-    // 1) DNPRC (ASMX) con Provincia/Municipio si están informados
-    if (prov || muni) {
-      try {
-        const u = `http://ovc.catastro.meh.es/OVCServWeb/OVCSWLocalizacionRC/OVCCallejeroCodigos.asmx/Consulta_DNPRC_Codigos?CodigoProvincia=${encodeURIComponent(prov||'')}&CodigoMunicipio=${encodeURIComponent(muni||'')}&CodigoMunicipioINE=&RC=${encodeURIComponent(rc)}`;
-        tried.push(u);
-        const xml = await fetchText(u);
-        const xy = tryParseXY(xml);
-        if (xy) return {xy, used: u};
-      } catch(e){}
-    }
-
-    // 2) DNPRC (WCF)
-    try{
-      const u = `https://ovc.catastro.meh.es/OVCServWeb/OVCWcfCallejero/COVCCallejero.svc/Consulta_DNPRC?RC=${encodeURIComponent(rc)}`;
-      tried.push(u);
-      const xml = await fetchText(u);
-      const xy = tryParseXY(xml);
-      if(xy) return {xy, used:u};
-    }catch(e){}
-
-    // 3) DNPRC (ASMX) sin provincia/municipio
-    try{
-      const u = `https://ovc.catastro.meh.es/OVCServWeb/OVCSWLocalizacionRC/OVCSWLocalizacionRC.asmx/Consulta_DNPRC?Provincia=&Municipio=&RC=${encodeURIComponent(rc)}`;
-      tried.push(u);
-      const xml = await fetchText(u);
-      const xy = tryParseXY(xml);
-      if(xy) return {xy, used:u};
-    }catch(e){}
-
-    // 4) RCCOOR (ASMX) con Provincia/Municipio si están informados
-    if (prov || muni) {
-      try{
-        const u = `https://ovc.catastro.meh.es/OVCServWeb/OVCSWLocalizacionRC/OVCSWLocalizacionRC.asmx/Consulta_RCCOOR?Provincia=${encodeURIComponent(prov||'')}&Municipio=${encodeURIComponent(muni||'')}&RC=${encodeURIComponent(rc)}&SRS=EPSG:4258`;
-        tried.push(u);
-        const xml = await fetchText(u);
-        const xy = tryParseXY(xml);
-        if(xy) return {xy, used:u};
-      }catch(e){}
-    }
-
-    // 5) RCCOOR (ASMX) sin provincia/municipio (a veces no devuelve nada para 14)
-    try{
-      const u = `http://ovc.catastro.meh.es/INSPIRE/wfsCP.aspx?service=wfs&version=2&request=getfeature&STOREDQUERIE_ID=GetParcel&srsname=EPSG:4326&REFCAT=${encodeURIComponent(rc)}`;
-      tried.push(u);
-      const xml = await fetchText(u);
-      const xy = tryParseXY(xml);
-      if(xy) return {xy, used:u};
-    }catch(e){}
-
-    return {xy:null, tried};
-  }
-
-  function extractSummaryFromHTML(html){
-    const div = document.createElement('div'); div.innerHTML = html;
-    const text = div.textContent || '';
-    const mRC = text.match(/(RC|Referencia(?:\s+)?Catastral|nationalCadastralReference)\s*[:=]?\s*([A-Z0-9\-\.]{10,25})/i);
-    const mMuni = text.match(/(Municipio|Municipality|locality)\s*[:=]\s*([A-ZÁÉÍÓÚÜÑa-záéíóúüñ\.\-\s]+)/);
-    const mSup = text.match(/(Área|Superficie|Area)\s*[:=]\s*([\d\.,]+\s*(m²|m2)?)/i);
-    let out='';
-    if(mRC) out+=`<div><b>RC:</b> ${mRC[2]}</div>`;
-    if(mMuni) out+=`<div><b>Municipio:</b> ${mMuni[2].trim()}</div>`;
-    if(mSup) out+=`<div><b>Superficie:</b> ${mSup[2]}</div>`;
-    return out;
-  }
-
   async function buscar(){
-    const rc = (q('refcat').value||'').trim();
-    const prov = (q('prov').value||'').trim();
-    const muni = (q('muni').value||'').trim();
-
+    const rc = (inp.value||'').trim();
     if(!rc){ setEstado('Introduce una referencia catastral.'); return; }
 
-    htmlDiv.innerHTML=''; resumenDiv.style.display='none'; debugDiv.textContent='';
-    setEstado('Localizando coordenadas…');
+    setEstado('Consultando WFS (GetFeature by REFCAT)…');
+    divC.style.display='none'; debug.textContent='';
+
+    // WFS 2.0 — INSPIRE — parcela por REFCAT (EPSG:3857)
+    const url = `http://ovc.catastro.meh.es/INSPIRE/wfsCP.aspx?service=wfs&version=2&request=getfeature&STOREDQUERIE_ID=GetParcel&srsname=EPSG:3857&REFCAT=${encodeURIComponent(rc)}`;
 
     try{
-      const loc = await getXYfromRC(rc, prov, muni);
-      if(!loc.xy){
-        setEstado('No se han obtenido coordenadas para esa RC. Prueba indicando Provincia y Municipio.');
-        debugDiv.textContent = 'Endpoints probados:\n' + (loc.tried||[]).join('\n');
+      const xml = await fetchText(url);
+      debug.textContent = xml.substring(0, 100000); // muestra parte para depurar
+
+      const pt = getReferencePoint(xml);
+      if(!pt){
+        setEstado('No se encontró ReferencePoint_ES (ni geometría utilizable) para esa RC.');
         return;
       }
 
-      const { x, y } = loc.xy; // lon,lat (ETRS89)
-      const delta=0.0004; // ~40 m
-      const minx=(x-delta).toFixed(6), miny=(y-delta).toFixed(6);
-      const maxx=(x+delta).toFixed(6), maxy=(y+delta).toFixed(6);
+      // Mostramos coordenadas y versión 4326
+      const {x, y} = pt;
+      const {lon, lat} = webMercatorToLonLat(x, y);
+      p3857.textContent = `${x.toFixed(2)}, ${y.toFixed(2)}`;
+      p4326.textContent = `${lon.toFixed(6)}, ${lat.toFixed(6)}`;
+      divC.style.display = 'block';
+      setEstado('Listo. Puedes usar estas coordenadas para centrar tu mapa.');
 
-      setEstado('Consultando WMS GetFeatureInfo…');
-      const wmsBase='https://ovc.catastro.meh.es/cartografia/INSPIRE/spadgcwms.aspx';
-      const params=new URLSearchParams({
-        SERVICE:'WMS',
-        VERSION:'1.1.1', // orden lon,lat
-        REQUEST:'GetFeatureInfo',
-        LAYERS:'CP.CadastralParcel',
-        QUERY_LAYERS:'CP.CadastralParcel',
-        SRS:'EPSG:4258',
-        BBOX:`${minx},${miny},${maxx},${maxy}`,
-        WIDTH:'101',
-        HEIGHT:'101',
-        X:'50',
-        Y:'50',
-        INFO_FORMAT:'text/html'
-      });
-      const wmsUrl = `${wmsBase}?${params.toString()}`;
-      const html = await fetchText(wmsUrl);
-
-      htmlDiv.innerHTML = html || '(Sin contenido)';
-      const resumen = extractSummaryFromHTML(html);
-      if(resumen){ resumenDiv.innerHTML = `<b>Resumen</b><br>${resumen}`; resumenDiv.style.display='block'; }
-
-      setEstado(`RC localizada en (${x.toFixed(6)}, ${y.toFixed(6)}).`);
-      debugDiv.textContent = [
-        prov||muni ? `Se usó Provincia/Municipio: ${prov} / ${muni}` : 'Provincia/Municipio no informados',
-        '',
-        'Localizador usado:',
-        (loc.used || '(no capturado)'),
-        '',
-        'URL GetFeatureInfo:',
-        wmsUrl
-      ].join('\n');
+      // (Opcional) enviar a un padre (si se inserta en un iframe en EB)
+      try{ parent.postMessage({ type:'rc_point', srs:'EPSG:4326', lon, lat }, '*'); }catch(e){}
     }catch(e){
       console.error(e);
-      setEstado('Error en la consulta (proxy/CORS o servicio no disponible).');
+      setEstado('Error en la consulta (CORS/proxy o servicio no disponible).');
     }
   }
 
-  document.getElementById('btnBuscar').addEventListener('click',buscar);
-  document.getElementById('refcat').addEventListener('keydown',e=>{ if(e.key==='Enter') buscar(); });
+  q('btnBuscar').addEventListener('click', buscar);
+  inp.addEventListener('keydown', e=>{ if(e.key==='Enter') buscar(); });
+  q('copiar').addEventListener('click', ()=>{
+    const t = p4326.textContent;
+    if(!t) return;
+    navigator.clipboard.writeText(t).then(()=> setEstado('Coordenadas copiadas (lon,lat WGS84).'));
+  });
 })();
 </script>
 </html>
