@@ -2,7 +2,7 @@
 <html lang="es">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Buscar RC (WFS) + ReferencePoint_ES</title>
+<title>Cerca referència cadastral</title>
 <style>
   body{font-family:system-ui,Segoe UI,Arial;margin:16px}
   .row{display:flex;gap:8px;align-items:center}
@@ -15,16 +15,16 @@
   .small{font-size:12px;color:#666}
 </style>
 
-<h3>Búsqueda por Referencia Catastral (WFS → ReferencePoint_ES)</h3>
+<h3>Cerca referència cadastral</h3>
 <div class="row">
-  <input id="refcat" placeholder="Ej: 25057A00500045 (14) o 1234567AB1234C0001DE (20)" pattern="[A-Za-z0-9]{10,25}" required>
-  <button id="btnBuscar">Buscar</button>
+  <input id="refcat" placeholder="Ej: 12345A12345678 (14) o 12345A123456789012AB (20)" pattern="[A-Za-z0-9]{10,25}" required>
+  <button id="btnBuscar">Cerca</button>
 </div>
 
 <div id="estado"></div>
 
 <div id="coords">
-  <div><b>ReferencePoint_ES</b></div>
+  <div><b>Centroide</b></div>
   <div>EPSG:3857 → <span id="p3857"></span></div>
   <div>EPSG:4326 → <span id="p4326"></span> <span class="small">(lon,lat)</span></div>
   <div style="margin-top:8px">
@@ -41,7 +41,7 @@
 (function(){
   // === Proxy CORS ===
   // Pon aquí tu Cloudflare Worker (debe acabar en ?url=). Si no tienes, queda el fallback de pruebas.
-  const workerProxy = 'https://ivio.irodriguezdiputacio.workers.dev/?url='; // ej: 'https://tu-proxy.worker.dev/?url='
+  const workerProxy = ''; // ej: 'https://tu-proxy.worker.dev/?url='
   const fallbackProxy = 'https://thingproxy.freeboard.io/fetch/'; // solo pruebas
   const proxy = workerProxy || fallbackProxy;
   const wrap  = url => proxy + encodeURIComponent(url);
