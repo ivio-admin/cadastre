@@ -15,11 +15,11 @@
 
 <div class="row">
   <input id="refcat" pattern="[A-Za-z0-9]{10,25}" required>
-  <button id="btnBuscar">Cerca (v5)</button>
+  <button id="btnBuscar">Cerca (v6)</button>
 </div>
 
 <div id="estado"></div>
-<div id="debug"></div>
+  <div id="debug"></div>
 
 <script>
 (function(){
@@ -129,7 +129,7 @@
 
       setEstado('Obrint el visor centrat a la referència cadastral...');
       // Abrimos en el mismo top (por si está embebido en EB)
-      window.location.href = url // no funciona: window.top.location.href = url; y window.open(url, '_blank');
+      window.location.href = url; // no funciona: window.top.location.href = url; y window.open(url, '_blank');
 
     }catch(e){
       console.error(e);
