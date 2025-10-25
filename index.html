@@ -2,7 +2,7 @@
 <html lang="es">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cerca referència cadastral</title>
+<title>Cerca referència cadastral:</title>
 <style>
   body{font-family:system-ui,Segoe UI,Arial;margin:16px}
   .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -132,7 +132,7 @@
 
       setEstado('Obrint el visor centrat a la referència cadastral…');
       // Abrimos en el mismo top (por si está embebido en EB)
-      window.location.href = url;
+      window.top.location.href = url; // antes: window.location.href = url; // antes: window.top.location.href = url;
 
     }catch(e){
       console.error(e);
