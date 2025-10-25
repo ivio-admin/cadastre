@@ -2,7 +2,7 @@
 <html lang="es">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cerca referència cadastral</title>
+<title>Cerca referència cadastral:</title>
 <style>
   body{font-family:system-ui,Segoe UI,Arial;margin:16px}
   .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -15,7 +15,7 @@
 
 <div class="row">
   <input id="refcat" pattern="[A-Za-z0-9]{10,25}" required>
-  <button id="btnBuscar">Cerca (v7)</button>
+  <button id="btnBuscar">Cerca (v3)</button>
 </div>
 
 <div id="estado"></div>
@@ -123,16 +123,16 @@
       debug.textContent = xml.substring(0,8000);
 
       const pt = getReferencePoint(xml);
-      if(!pt){ setEstado('No s\'ha trobat la referència cadastral.'); return; }
+      if(!pt){ setEstado('No s`ha trobat la geometria de la referència cadastral.'); return; }
 
       const {x,y} = pt;
       const hash = buildHash(x, y);
       const sep  = experienceBase.includes('#') ? '&' : '#';
       const url  = `${experienceBase}${sep}${hash}`;
 
-      setEstado('Obrint el visor centrat a la referència cadastral...');
+      setEstado('Obrint el visor centrat a la referència cadastral…');
       // Abrimos en el mismo top (por si está embebido en EB)
-      window.location.href = url; // no funciona: window.top.location.href = url; y window.open(url, '_blank');
+      window.open(url, '_blank'); // antes: window.location.href = url; // no funciona: window.top.location.href = url;
 
     }catch(e){
       console.error(e);
