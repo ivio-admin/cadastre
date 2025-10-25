@@ -2,7 +2,7 @@
 <html lang="es">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cerca referència cadastral:</title>
+<title>Cerca referència cadastral</title>
 <style>
   body{font-family:system-ui,Segoe UI,Arial;margin:16px}
   .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -15,10 +15,11 @@
 
 <div class="row">
   <input id="refcat" pattern="[A-Za-z0-9]{10,25}" required>
-  <button id="btnBuscar">Cerca (v4)</button>
+  <button id="btnBuscar">Cerca (v5)</button>
 </div>
 
 <div id="estado"></div>
+<div id="debug"></div>
 
 <script>
 (function(){
