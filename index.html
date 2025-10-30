@@ -131,8 +131,7 @@
       const url  = `${experienceBase}${sep}${hash}`;
 
       setEstado('Obrint el visor centrat a la referència cadastral…');
-      // Abrimos en el mismo top (por si está embebido en EB)
-      window.open(url, '_blank'); // antes: window.location.href = url; // no funciona: window.top.location.href = url;
+      window.location.href = url; // window.open(url, '_blank'); (en otra ventana) // window.top.location.href = url; (en el mismo marco?) // window.location.href = url; (en la misma ventana?)
 
     }catch(e){
       console.error(e);
