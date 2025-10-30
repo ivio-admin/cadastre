@@ -2,62 +2,47 @@
 <html lang="es">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RC → URL Experience (auto-center)</title>
+<title>Cerca referència cadastral:</title>
 <style>
   body{font-family:system-ui,Segoe UI,Arial;margin:16px}
   .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   input{padding:8px 10px;border:1px solid #ccc;border-radius:8px}
-  input[type="text"]{flex:1;min-width:260px}
+  input[type="text"]{flex:1;min-width:250px}
   button{padding:8px 12px;border:0;border-radius:8px;background:#1f6feb;color:#fff;cursor:pointer}
   #estado{margin-top:10px;color:#555}
   #debug{margin-top:10px;font:12px/1.3 monospace;color:#666;white-space:pre-wrap}
 </style>
 
-<h3>Buscar RC y abrir tu Experience centrado</h3>
-
 <div class="row">
-  <input id="refcat" placeholder="RC: 12345A12345678 (14) o 12345A123456789012AB (20)" pattern="[A-Za-z0-9]{10,25}" required>
-  <button id="btnBuscar">Buscar y abrir mapa</button>
+  <input id="refcat" pattern="[A-Za-z0-9]{10,25}" required>
+  <button id="btnBuscar">Cerca (v3)</button>
 </div>
 
 <div id="estado"></div>
 <details style="margin-top:10px">
-  <summary>Depuración</summary>
+  <summary>codi rebut</summary>
   <div id="debug"></div>
 </details>
 
 <script>
 (function(){
-  // === 1) CONFIGURA AQUÍ TU EXPERIENCE Y PARÁMETROS DEL MAPA ===
-  // Base de tu Experience (sin hash). Usa exactamente la tuya:
   const experienceBase = 'https://experience.arcgis.com/experience/1258b2419aef4949bc929e9f25905a25';
-
-  // ID del widget de mapa (en tu URL aparece como "widget_6=...")
   const mapWidgetId = 'widget_6';
-
-  // dataSource a activar (en tu ejemplo: dataSource_5)
   const dataSourceId = 'dataSource_5';
-
-  // Escala/Nivel/Rotación deseados (igual que tu ejemplo)
-  const defaultScale = 4000;
+  const defaultScale = 1000;
   const level = -1;
   const rotation = 0;
-
-  // layer_visibility EXACTAMENTE como tu ejemplo (puedes ampliar si quieres)
   const layerVisibilityObj = {
     "widget_6-dataSource_5": {
       "widget_6-dataSource_5-199d57332c4-layer-37-199d57334ec-layer-45": true
     }
   };
-
-  // === 2) PROXY CORS (recomendado Cloudflare Worker) ===
-  // Si tienes Worker propio, pégalo aquí (debe acabar en ?url=). Si no, queda fallback de pruebas.
-  const workerProxy  = 'https://ivio.irodriguezdiputacio.workers.dev/?url='; // ej: 'https://tu-proxy.worker.dev/?url='
-  const fallbackProxy = 'https://thingproxy.freeboard.io/fetch/'; // solo pruebas
+  
+  const workerProxy  = 'https://ivio.irodriguezdiputacio.workers.dev/?url=';
+  const fallbackProxy = 'https://thingproxy.freeboard.io/fetch/';
   const proxy = workerProxy || fallbackProxy;
   const wrap  = url => proxy + encodeURIComponent(url);
 
-  // === 3) UTILIDADES ===
   const q = id => document.getElementById(id);
   const estado = q('estado'), debug = q('debug');
   const setEstado = t => estado.textContent = t || '';
@@ -93,7 +78,7 @@
     return null;
   }
 
-  // Construye el hash de URL exactamente como tu ejemplo, sustituyendo X,Y
+  // Construye el hash de URL sustituyendo X,Y
   function buildHash(x, y){
     const centerVal = encodeURIComponent(`${x},${y},102100`);
     const viewpoint = {
@@ -108,8 +93,7 @@
     const viewpointEnc = encodeURIComponent(JSON.stringify(viewpoint));
     const layerVisEnc  = encodeURIComponent(JSON.stringify(layerVisibilityObj));
 
-    // Orden de parámetros siguiendo tu modelo:
-    // widget_6=active_datasource_id:dataSource_5,center:X%2CY%2C102100,scale:3906.25,level:-1,rotation:0,viewpoint:{...},layer_visibility:{...}
+    // Orden de parámetros
     const parts = [
       `${mapWidgetId}=active_datasource_id:${dataSourceId}`,
       `center:${centerVal}`,
@@ -125,33 +109,34 @@
   // === 4) FLUJO PRINCIPAL ===
   async function buscar(){
     const rc = (q('refcat').value||'').trim();
-    if(!rc){ setEstado('Introduce una referencia catastral.'); return; }
+    if(!rc){ setEstado('Introdueix una referència cadastral.'); return; }
 
-    setEstado('Consultando WFS (GetParcel por REFCAT)…');
+    setEstado('Consultant referència cadastral...');
     debug.textContent = '';
 
     // WFS 2.0 GetParcel por REFCAT (EPSG:3857)
-    const wfs = `http://ovc.catastro.meh.es/INSPIRE/wfsCP.aspx?service=wfs&version=2&request=getfeature&STOREDQUERIE_ID=GetParcel&srsname=EPSG:3857&REFCAT=${encodeURIComponent(rc)}`;
+    const wfs = `https://ovc.catastro.meh.es/INSPIRE/wfsCP.aspx?service=wfs&version=2&request=getfeature&STOREDQUERIE_ID=GetParcel&srsname=EPSG:3857&REFCAT=${encodeURIComponent(rc)}`;
+
 
     try{
       const xml = await fetchText(wfs);
       debug.textContent = xml.substring(0,8000);
 
       const pt = getReferencePoint(xml);
-      if(!pt){ setEstado('No se encontró ReferencePoint_ES para esa RC.'); return; }
+      if(!pt){ setEstado('No s`ha trobat la geometria de la referència cadastral.'); return; }
 
       const {x,y} = pt;
       const hash = buildHash(x, y);
       const sep  = experienceBase.includes('#') ? '&' : '#';
       const url  = `${experienceBase}${sep}${hash}`;
 
-      setEstado('Abriendo tu Experience centrado…');
+      setEstado('Obrint el visor centrat a la referència cadastral…');
       // Abrimos en el mismo top (por si está embebido en EB)
-      window.top.location.href = url;
+      window.open(url, '_blank'); // antes: window.location.href = url; // no funciona: window.top.location.href = url;
 
     }catch(e){
       console.error(e);
-      setEstado('Error (CORS/proxy o servicio WFS). Revisa el proxy configurado.');
+      setEstado('Error del CORS/proxy o el servei WFS.');
     }
   }
 
