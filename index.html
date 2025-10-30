@@ -15,7 +15,7 @@
 
 <div class="row">
   <input id="refcat" pattern="[A-Za-z0-9]{10,25}" required>
-  <button id="btnBuscar">Cerca (v4)</button>
+  <button id="btnBuscar">Cerca (v5)</button>
 </div>
 
 <div id="estado"></div>
@@ -131,7 +131,7 @@
       const url  = `${experienceBase}${sep}${hash}`;
 
       setEstado('Obrint el visor centrat a la referència cadastral…');
-      window.location.href = url; // window.open(url, '_blank'); (en otra ventana) // window.top.location.href = url; (en el mismo marco?) // window.location.href = url; (en la misma ventana?)
+      window.top.location.href = url; // window.open(url, '_blank'); (en otra ventana) // window.top.location.href = url; (en la misma ventana?) // window.location.href = url; (en el mismo marco)
 
     }catch(e){
       console.error(e);
